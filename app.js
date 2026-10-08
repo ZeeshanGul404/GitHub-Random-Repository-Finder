@@ -25,7 +25,46 @@ function escapeHtml(value) {
 
 let isLoading = false;
 const repositoryCache = new Map();
+const repositoryRequests = new Map();
 const cacheDuration = 5 * 60 * 1000;
+
+function getRepositories(selectedLanguage, githubLanguage) {
+    const cachedRepositories = repositoryCache.get(selectedLanguage);
+
+    if (cachedRepositories && Date.now() - cachedRepositories.cachedAt < cacheDuration) {
+        return Promise.resolve(cachedRepositories);
+    }
+
+    const pendingRequest = repositoryRequests.get(selectedLanguage);
+    if (pendingRequest) return pendingRequest;
+
+    const url = `https://api.github.com/search/repositories?q=language:${encodeURIComponent(githubLanguage)}&sort=stars&order=desc&per_page=100`;
+    const request = fetch(url, {
+        headers: {
+            Accept: "application/vnd.github+json"
+        }
+    }).then(async (response) => {
+        if (!response.ok) {
+            if (response.status === 403 || response.status === 429) {
+                throw new Error(getRateLimitMessage(response));
+            }
+            throw new Error("Something went wrong.");
+        }
+
+        const data = await response.json();
+        const repositories = {
+            items: Array.isArray(data.items) ? data.items : [],
+            cachedAt: Date.now()
+        };
+        repositoryCache.set(selectedLanguage, repositories);
+        return repositories;
+    });
+
+    repositoryRequests.set(selectedLanguage, request);
+    return request.finally(() => {
+        repositoryRequests.delete(selectedLanguage);
+    });
+}
 
 function getRateLimitMessage(response) {
     const retryAfter = Number(response.headers.get("Retry-After"));
@@ -64,30 +103,7 @@ async function getRepository() {
     repository.innerHTML = "";
 
     try {
-        let repositories = repositoryCache.get(selectedLanguage);
-
-        if (!repositories || Date.now() - repositories.cachedAt >= cacheDuration) {
-            const url = `https://api.github.com/search/repositories?q=language:${encodeURIComponent(githubLanguage)}&sort=stars&order=desc&per_page=100`;
-            const response = await fetch(url, {
-                headers: {
-                    Accept: "application/vnd.github+json"
-                }
-            });
-
-            if (!response.ok) {
-                if (response.status === 403 || response.status === 429) {
-                    throw new Error(getRateLimitMessage(response));
-                }
-                throw new Error("Something went wrong.");
-            }
-
-            const data = await response.json();
-            repositories = {
-                items: Array.isArray(data.items) ? data.items : [],
-                cachedAt: Date.now()
-            };
-            repositoryCache.set(selectedLanguage, repositories);
-        }
+        const repositories = await getRepositories(selectedLanguage, githubLanguage);
 
         if (repositories.items.length === 0) {
             message.textContent = `No repositories found for ${githubLanguage}. Try another language.`;
@@ -155,6 +171,7 @@ findButton.addEventListener("click", getRepository);
 language.addEventListener("change", () => {
     if (language.value !== "") {
         message.textContent = "";
+        getRepositories(language.value, languageAliases[language.value] || language.value).catch(() => {});
     }
 });
 
