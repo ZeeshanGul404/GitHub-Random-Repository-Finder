@@ -176,6 +176,7 @@ button:active {
     margin-bottom: 14px;
     font-size: clamp(1.3rem, 2vw, 1.8rem);
     line-height: 1.2;
+    overflow-wrap: anywhere;
 }
 
 .repository-card h2 a {
